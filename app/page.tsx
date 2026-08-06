@@ -284,13 +284,14 @@ export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null)
   const heroVideoRef = useRef<HTMLVideoElement|null>(null)
   const liveVideoRef = useRef<HTMLVideoElement|null>(null)
+  const cameraStreamsRef = useRef<MediaStream[]>([])
 
   const ctx = useMemo(()=>contexts.find(c=>c.id===selectedId)??contexts[0],[selectedId])
   const confidence = isRunning ? ctx.confidence : 0
   const waveHeights = useMemo(()=>Array.from({length:34},(_,i)=>8+((i*13)%28)),[])
 
   useEffect(()=>{
-    if (typeof window==='undefined') return
+    if (typeof window==='undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const dot = document.querySelector<HTMLElement>('.cursor-dot')
     if (!dot) return
     let mx=0,my=0,cx=0,cy=0,raf:number
@@ -306,14 +307,15 @@ export default function Page() {
   },[])
 
   useEffect(()=>{
-    if (typeof window==='undefined') return
-    let lenis:any, rafId:number
+    if (typeof window==='undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    let lenis:any, rafId:number|undefined, cancelled=false
     const init=async()=>{
       const [{ default: Lenis }, gsapMod, stMod] = await Promise.all([
         import('lenis'),
         import('gsap'),
         import('gsap/ScrollTrigger'),
       ])
+      if(cancelled) return
       const { gsap } = gsapMod
       const { ScrollTrigger } = stMod
       gsap.registerPlugin(ScrollTrigger)
@@ -377,8 +379,9 @@ export default function Page() {
     }
     init()
     return ()=>{
+      cancelled=true
       lenis?.destroy()
-      cancelAnimationFrame(rafId)
+      if(rafId !== undefined) cancelAnimationFrame(rafId)
       if(typeof window!=='undefined'){
         import('gsap/ScrollTrigger').then(({ScrollTrigger})=>{
           ScrollTrigger.getAll().forEach((t:any)=>t.kill())
@@ -388,10 +391,12 @@ export default function Page() {
   },[])
 
   useEffect(()=>{
-    if(typeof window==='undefined') return
+    if(typeof window==='undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const fns:Array<()=>void>=[]
+    let cancelled=false
     const init=async()=>{
       const {gsap}=await import('gsap')
+      if(cancelled) return
       const els=document.querySelectorAll<HTMLElement>('.btn-primary,.nav-cta,.run-btn,.cta-btn')
       els.forEach(el=>{
         const onMove=(e:MouseEvent)=>{
@@ -404,24 +409,39 @@ export default function Page() {
       })
     }
     init()
-    return ()=>fns.forEach(f=>f())
+    return ()=>{ cancelled=true; fns.forEach(f=>f()) }
   },[])
 
   useEffect(()=>{
-    if(typeof window==='undefined') return
+    if(typeof window==='undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     import('gsap').then(({gsap})=>{
       gsap.from('.uc-english,.uc-hindi',{opacity:0,y:8,duration:0.4,ease:'power3.out'})
     }).catch(()=>{})
   },[selectedId])
 
+  useEffect(()=>()=>{
+    cameraStreamsRef.current.forEach(stream=>stream.getTracks().forEach(track=>track.stop()))
+    cameraStreamsRef.current=[]
+    if(heroVideoRef.current) heroVideoRef.current.srcObject=null
+    if(liveVideoRef.current) liveVideoRef.current.srcObject=null
+  },[])
+
   const requestCamera=useCallback(async()=>{
+    cameraStreamsRef.current.forEach(stream=>stream.getTracks().forEach(track=>track.stop()))
+    cameraStreamsRef.current=[]
     try{
       const s1=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}})
-      if(heroVideoRef.current){heroVideoRef.current.srcObject=s1;heroVideoRef.current.play()}
+      cameraStreamsRef.current.push(s1)
+      if(heroVideoRef.current){heroVideoRef.current.srcObject=s1;void heroVideoRef.current.play().catch(()=>{})}
       const s2=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}})
-      if(liveVideoRef.current){liveVideoRef.current.srcObject=s2;liveVideoRef.current.play()}
+      cameraStreamsRef.current.push(s2)
+      if(liveVideoRef.current){liveVideoRef.current.srcObject=s2;void liveVideoRef.current.play().catch(()=>{})}
       setCameraGranted(true)
-    }catch{}
+    }catch{
+      cameraStreamsRef.current.forEach(stream=>stream.getTracks().forEach(track=>track.stop()))
+      cameraStreamsRef.current=[]
+      setCameraGranted(false)
+    }
   },[])
 
   function addReplay(c:Ctx){
@@ -445,7 +465,7 @@ export default function Page() {
 
       <nav className="nav" aria-label="Main navigation">
         <a href="#top" className="brand"><Mark/><span>Silent Interpreter</span></a>
-        <div className={`nav-links ${mobileOpen?'nav-links-open':''}`}>
+        <div id="mobile-navigation" className={`nav-links ${mobileOpen?'nav-links-open':''}`}>
           <a href="#universe" onClick={()=>setMobileOpen(false)}>Universe</a>
           <a href="#live" onClick={()=>setMobileOpen(false)}>Live Demo</a>
           <a href="#technology" onClick={()=>setMobileOpen(false)}>Technology</a>
@@ -453,7 +473,7 @@ export default function Page() {
           <a href="#roadmap" onClick={()=>setMobileOpen(false)}>Roadmap</a>
         </div>
         <a href="#live" className="nav-cta">Try the demo <ArrowRight size={13}/></a>
-        <button className="mobile-toggle" onClick={()=>setMobileOpen(!mobileOpen)} aria-label="Toggle menu">
+        <button className="mobile-toggle" onClick={()=>setMobileOpen(!mobileOpen)} aria-label={mobileOpen?'Close menu':'Open menu'} aria-expanded={mobileOpen} aria-controls="mobile-navigation">
           {mobileOpen?<X size={18}/>:<Menu size={18}/>}
         </button>
       </nav>
